@@ -1,15 +1,22 @@
-## Requirements
+Instruction on how to connect your smart home device (temperature sensor) to Home Assistant and send data to Robonomics. There will be two methods to connect your device: directly to Raspberry Pi via zigbee2MQTT adapter or through Xiaomi Gateway.
+# Requirements
 
-* Rapberry Pi 4 or 3
+* Raspberry Pi 4 or 3
 * SD card and SD adapter
-* Zigbee adapter [JetHome USB JetStick Z2](https://jhome.ru/catalog/parts/PCBA/293/) (one of [supported](https://www.zigbee2mqtt.io/information/supported_adapters.html))
 * Temperature sensor - [Keen Home RS-THP-MP-1.0](https://www.zigbee2mqtt.io/devices/RS-THP-MP-1.0.html) (or another [supported device](https://www.zigbee2mqtt.io/information/supported_devices.html))
 
-## Raspberry setup
+### Method 1 (with zigbee2MQTT)
+* Zigbee adapter [JetHome USB JetStick Z2](https://jhome.ru/catalog/parts/PCBA/293/) (or one of [supported](https://www.zigbee2mqtt.io/information/supported_adapters.html))
 
-Install [Raspberry Pi Imager](https://www.raspberrypi.com/software/) on your computer.
+### Method 2 (with Xiaomi Gateway)
+* Xiaomi Gateway (one of [supported](https://www.home-assistant.io/integrations/xiaomi_miio#xiaomi-gateway))
+* [Mi Home app](https://play.google.com/store/apps/details?id=com.xiaomi.smarthome&hl=ru&gl=US)
 
-Insert SD card and run Imager. Choose 64-bit Ubuntu Server as an OS and your SD card and press `write`.
+# Raspberry setup
+
+You need to setup Raspberry Pi for both methods.
+
+Install [Raspberry Pi Imager](https://www.raspberrypi.com/software/) on your computer. Insert SD card and run Imager. Choose 64-bit Ubuntu Server as an OS and your SD card and press `write`.
 
 ![pi](media/pi.png)
 
@@ -61,16 +68,6 @@ ssh ubuntu@192.168.43.56
 ```
 Password is "ubuntu".
 
-## Mosquitto MQTT broker
-
-Now you neet to install MQTT broker to Raspberry:
-
-```bash
-sudo apt update
-sudo apt install mosquitto mosquitto-clients
-```
-Mosquitto will run automatically after installation.
-
 ## Substrate Interface
 
 To pub data to Robonomics you need to install `substrate-interface` python package (you need to install RUST before):
@@ -81,6 +78,70 @@ source $HOME/.cargo/env
 rustup default nightly
 pip3 install substrate-interface
 ```
+
+## Home Assistant
+
+Now we need to install Home Assistant to Raspberry. Installation instructions are [here](https://www.home-assistant.io/installation/linux#install-home-assistant-core). You need to install `Home Assistant Core`.
+
+After installation create `send_datalog.py` script that will send receiving data to Robonomics:
+
+```bash
+sudo nano /srv/homeassistant/python_scripts/send_datalog.py
+```
+
+And add the folloving (replace `<mnemonic>` with mnemonic seed from your account in Robonomics Network):
+```python
+from substrateinterface import SubstrateInterface, Keypair
+import time
+import sys
+
+substrate = SubstrateInterface(
+                    url="wss://main.frontier.rpc.robonomics.network",
+                    ss58_format=32,
+                    type_registry_preset="substrate-node-template",
+                    type_registry={
+                        "types": {
+                            "Record": "Vec<u8>",
+                            "<T as frame_system::Config>::AccountId": "AccountId",
+                            "RingBufferItem": {
+                                "type": "struct",
+                                "type_mapping": [
+                                    ["timestamp", "Compact<u64>"],
+                                    ["payload", "Vec<u8>"],
+                                ],
+                            },
+                        }
+                    }
+                )
+
+mnemonic = "<mnemonic>"
+keypair = Keypair.create_from_mnemonic(mnemonic, ss58_format=32)
+
+data = ' '.join(sys.argv[1:])
+print(f"Got message: {data}")
+call = substrate.compose_call(
+        call_module="Datalog",
+        call_function="record",
+        call_params={
+            'record': data
+        }
+    )
+extrinsic = substrate.create_signed_extrinsic(call=call, keypair=keypair)
+receipt = substrate.submit_extrinsic(extrinsic, wait_for_inclusion=True)
+print(f"Datalog created with extrinsic hash: {receipt.extrinsic_hash}")
+```
+
+# Sensors Connection Method 1 (with zigbee2MQTT)
+
+## Mosquitto MQTT broker
+
+Now you neet to install MQTT broker to Raspberry:
+
+```bash
+sudo apt update
+sudo apt install mosquitto mosquitto-clients
+```
+Mosquitto will run automatically after installation.
 
 ## Zigbee2MQTT setup
 
@@ -203,11 +264,9 @@ Now that everything works, we want systemctl to start Zigbee2MQTT automatically 
 sudo systemctl enable zigbee2mqtt.service
 ```
 
-## Home Assistant
+## Home Assistant Setup
 
-Now we need to install Home Assistant to Raspberry. Installation instructions are [here](https://www.home-assistant.io/installation/linux#install-home-assistant-core). You need to install `Home Assistant Core`.
-
-After installation you need to configure it. Open configuration file:
+Open Home Assistant configuration file:
 
 ```bash
 nano ~/.homeassistant/configuration.yaml
@@ -268,54 +327,7 @@ shell_command:
   send_datalog_climate: 'python3 python_scripts/send_datalog.py temperature={{ states("sensor.mqtt_climate_temperature")  }} humidity={{ states("sensor.mqtt_climate_humidity") }} pressure={{ states("sensor.mqtt_pressure") }} battery={{ states("sensor.mqtt_climate_battery") }} linkquality={{ states("sensor.mqtt_climate_link_quality") }} voltage={{ states("sensor.mqtt_climate_voltage") }}'
 ```
 
-Then create `send_datalog.py` script that sends receiving data to Robonomics:
-
-```bash
-sudo nano /srv/homeassistant/python_scripts/send_datalog.py
-```
-
-And add the folloving (replace `<mnemonic>` with mnemonic seed from your account in Robonomics Network):
-```python
-from substrateinterface import SubstrateInterface, Keypair
-import time
-import sys
-
-substrate = SubstrateInterface(
-                    url="wss://main.frontier.rpc.robonomics.network",
-                    ss58_format=32,
-                    type_registry_preset="substrate-node-template",
-                    type_registry={
-                        "types": {
-                            "Record": "Vec<u8>",
-                            "<T as frame_system::Config>::AccountId": "AccountId",
-                            "RingBufferItem": {
-                                "type": "struct",
-                                "type_mapping": [
-                                    ["timestamp", "Compact<u64>"],
-                                    ["payload", "Vec<u8>"],
-                                ],
-                            },
-                        }
-                    }
-                )
-
-mnemonic = "<mnemonic>"
-keypair = Keypair.create_from_mnemonic(mnemonic, ss58_format=32)
-
-data = ' '.join(sys.argv[1:])
-print(f"Got message: {data}")
-call = substrate.compose_call(
-        call_module="Datalog",
-        call_function="record",
-        call_params={
-            'record': data
-        }
-    )
-extrinsic = substrate.create_signed_extrinsic(call=call, keypair=keypair)
-receipt = substrate.submit_extrinsic(extrinsic, wait_for_inclusion=True)
-print(f"Datalog created with extrinsic hash: {receipt.extrinsic_hash}")
-```
-Start Home Assistant with new configuration:
+Then start Home Assistant with new configuration:
 
 ```bash
 cd /srv/homeassistant
@@ -341,7 +353,64 @@ Go to `By Entity` and tick all sensors that you need
 Pres continue and you will be able to see sensor data at the homepage (you may see `unknown` before sensor send new data)
 
 In a similar way you can add card for Robonomics Service. With this you can start or stop the servise or send current measurements with `run action` button.
+
+![action](media/datalog.png)
+
 You homepage will look like this
 
 ![home](media/home.png)
 
+# Sensors Connection Method 2 (with Xiaomi Gateway)
+
+You need your gateway with all sensors to be connected to the Mi Home app. If you haven't done this yet press `+` button on the top right corner, find your hub (it must be in connecting mode with long press to power button) and follow instructions in the app. After you add the gateway, you need to add sensors: press on your gateway, then go to `Child device` and press `+`. Find required device and follow the instructions on the screen. For more details look at user manual of your hub.
+
+## Add Gateway to Home Assistant
+
+Start Home Assistant if you haven't done it yet:
+```bash
+cd /srv/homeassistant
+hass
+```
+
+In your Home Assistant:
+```
+http://<raspberry_address>:8123
+```
+Go to `Configuration/Integrations` and press `Add Intagration`. There you need to Find `Xiaomi Miio`:
+
+![integration](media/integration.png)
+
+Then fill your username (or phone) and password from Mi Home account and choose your country server:
+
+![auth](media/auth.png)
+
+Press `Submit` and choose your Hub (Aqara Hub in this example):
+
+![hub](media/hub.png)
+
+Press `Submit` and you will be able to see your gateway in Integrations page.
+
+Then we need to setup action to send data to Robonomics. For that open a configuration file:
+
+```bash
+nano ~/.homeassistant/configuration.yaml
+```
+
+And add following to the end of file:
+
+```
+automation:
+  - alias: "send_datalog_aqara"
+    trigger:
+      platform: time_pattern
+      minutes: "/5"
+    action:
+      service: shell_command.send_datalog_aqara
+
+shell_command:
+  send_datalog_aqara: 'python3 python_scripts/send_datalog.py aqara_temp={{ states("sensor.temperature_lumi_158d0006bcd022") }}'
+```
+
+You can choose how often you want to send data with changing the value in `minutes: "/5"`.
+
+Restart Home Assistant. You can add the data from sensors to your homepage like in `Home Assistant setup` in the description to Method 1.
