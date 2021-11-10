@@ -400,15 +400,24 @@ And add following to the end of file:
 
 ```
 automation:
-  - alias: "send_datalog_aqara"
+  - alias: "send_datalog_temperature_sensor"
     trigger:
       platform: time_pattern
       minutes: "/5"
     action:
-      service: shell_command.send_datalog_aqara
+      service: shell_command.send_datalog_temperature_sensor
+
+  - alias: "send_datalog_contact_sensor"
+    trigger:
+      platform: state
+      entity_id:
+        - binary_sensor.contact_sensor
+    action:
+      service: shell_command.send_datalog_contact_sensor
 
 shell_command:
-  send_datalog_aqara: 'python3 python_scripts/send_datalog.py aqara_temp={{ states("sensor.temperature_lumi_158d0006bcd022") }}'
+  send_datalog_temperature_sensor: 'python3 python_scripts/send_datalog.py sensor_humidity={{ states("sensor.temperature_sensor_humidity") }} sensor_temp={{ states("sensor.temperature_sensor_temperature") }} sensor_battery={{ states("sensor.temperature_sensor_battery") }}'
+  send_datalog_contact_sensor: 'python3 python_scripts/send_datalog.py sensor_contact={{ states("binary_sensor.contact_sensor") }}'
 ```
 
 You can choose how often you want to send data with changing the value in `minutes: "/5"`.
