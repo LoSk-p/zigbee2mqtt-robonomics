@@ -94,7 +94,13 @@ And add the folloving (replace `<mnemonic>` with mnemonic seed from your account
 from substrateinterface import SubstrateInterface, Keypair
 import time
 import sys
+from Crypto.PublicKey import RSA
+from Crypto.Cipher import PKCS1_OAEP
+import binascii
+import nacl.secret
+import base64
 
+mnemonic = <mnemonic>
 substrate = SubstrateInterface(
                     url="wss://main.frontier.rpc.robonomics.network",
                     ss58_format=32,
@@ -114,16 +120,21 @@ substrate = SubstrateInterface(
                     }
                 )
 
-mnemonic = "<mnemonic>"
 keypair = Keypair.create_from_mnemonic(mnemonic, ss58_format=32)
-
+seed = keypair.seed_hex
+b = bytes(seed[0:32], "utf8")
+box = nacl.secret.SecretBox(b)
 data = ' '.join(sys.argv[1:])
+data = bytes(data, 'utf-8')
+
+encrypted = box.encrypt(data)
+text = base64.b64encode(encrypted).decode("ascii")
 print(f"Got message: {data}")
 call = substrate.compose_call(
         call_module="Datalog",
         call_function="record",
         call_params={
-            'record': data
+            'record': text
         }
     )
 extrinsic = substrate.create_signed_extrinsic(call=call, keypair=keypair)
